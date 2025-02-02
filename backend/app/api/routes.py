@@ -13,6 +13,9 @@ import json
 
 router = APIRouter()
 
+class ParcelaCreate(ParcelaBase):
+    geom: Optional[dict] = None  # Diccionario para GeoJSON
+
 # Obtener todas las parcelas
 @router.get("/parcelas", response_model=List[ParcelaSchema])
 def get_parcelas(db: Session = Depends(get_db)):

@@ -77,18 +77,19 @@ const TableParcelas = () => {
   }
 };
 
-  const handleUpdateParcela = async () => {
-    if (!editingParcela) return;
+const handleUpdateParcela = async () => {
+  if (!editingParcela) return;
 
-    try {
+  try {
       const updatedParcela = await updateParcela(editingParcela.id, editingParcela);
       setParcelas(parcelas.map((p) => (p.id === editingParcela.id ? updatedParcela : p)));
       setEditingParcela(null); // Cerrar formulario de edición
-    } catch (error) {
+      setSelectedParcelas([]); // Deseleccionar la parcela editada
+  } catch (error) {
       console.error("Error al actualizar la parcela:", error);
       alert("Error al actualizar la parcela.");
-    }
-  };
+  }
+};
 
   const handleDownloadCSV = () => {
     const selectedData = parcelas.filter((p) => selectedParcelas.includes(p.id));

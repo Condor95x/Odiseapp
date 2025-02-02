@@ -452,17 +452,18 @@ El frontend es el siguiente:
         };
 
         const handleUpdateParcela = async () => {
-            if (!editingParcela) return;
+    if (!editingParcela) return;
 
-            try {
-            const updatedParcela = await updateParcela(editingParcela.id, editingParcela);
-            setParcelas(parcelas.map((p) => (p.id === editingParcela.id ? updatedParcela : p)));
-            setEditingParcela(null); // Cerrar formulario de edición
-            } catch (error) {
-            console.error("Error al actualizar la parcela:", error);
-            alert("Error al actualizar la parcela.");
-            }
-        };
+    try {
+        const updatedParcela = await updateParcela(editingParcela.id, editingParcela);
+        setParcelas(parcelas.map((p) => (p.id === editingParcela.id ? updatedParcela : p)));
+        setEditingParcela(null); // Cerrar formulario de edición
+        setSelectedParcelas([]); // Deseleccionar la parcela editada
+    } catch (error) {
+        console.error("Error al actualizar la parcela:", error);
+        alert("Error al actualizar la parcela.");
+    }
+};
 
         const handleDownloadCSV = () => {
             const selectedData = parcelas.filter((p) => selectedParcelas.includes(p.id));
