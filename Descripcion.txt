@@ -1,0 +1,744 @@
+02.02
+
+Soy un ingeniero agronomo, especializado n nuevas tecnologias aplicadas a la agricultura y sobretodo a la vid. Deseo desarrollar una aplicacion que me permita gestinar las parcelas, las tareas que se realizan en finca y en bodega y calcular las docis a aplicar de los diversos productos.
+En un primer momento me quiero centrar en la gestion de las parcelas.
+
+Tengo la siguiente estructura en mi aplicacion:
+ODISEA (C:\Users\andre\Documentos\ODISEA)
+    FRONTEND
+    -components
+    --TableParcelas.js
+    -pages
+    --Parcelas.js
+    -services
+    --api.js
+    BACKEND
+    -app
+    --api
+    ---__init__.py
+    ---routes.py
+    --database
+    ---__init__.py
+    ---db.py
+    --models
+    ---__init__.py
+    ---models.py
+    --schemas
+    ---__init__.py
+    ---schemas.py
+    --__init__.py
+    --main.py
+El backend es el siguiente
+    *mi archivo "main.py":
+        import logging
+        from fastapi import FastAPI
+        from fastapi.middleware.cors import CORSMiddleware
+        from app.api.routes import router
+        from fastapi.staticfiles import StaticFiles
+        from fastapi.responses import JSONResponse
+
+        # Configuración básica del logging
+        logging.basicConfig(level=logging.DEBUG)  # Configura el nivel de log a 'DEBUG'
+        logger = logging.getLogger("myapp")  # Crea un logger llamado 'myapp'
+
+        app = FastAPI()
+
+        # Configurar CORS
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=["*"],  # Permite tu frontend local
+            allow_credentials=True,
+            allow_methods=["*"],  # Permite todos los métodos (GET, POST, etc.)
+            allow_headers=["*"],  # Permite todos los encabezados
+        )
+
+        @app.get("/")
+        def read_root():
+            logger.debug("Se ha llamado al endpoint raíz /")
+            return {"message": "¡Bienvenido a la API de ODISEA!"}
+
+
+
+        # Registrar el enrutador
+        app.include_router(router, prefix="/api/v1")
+
+        # Agregar manejo global de excepciones si es necesario
+        @app.exception_handler(Exception)
+        async def log_exception(request, exc):
+            logger.error(f"Excepción en el endpoint {request.url}: {str(exc)}")
+            return {"detail": "Error interno en el servidor"}
+    *mi archivo "routes.py":
+        from sqlalchemy.orm import Session
+        from fastapi import APIRouter, Depends, HTTPException
+        from fastapi.responses import JSONResponse
+        from sqlalchemy.sql import func
+        from app.models import Parcela
+        from app.database.db import get_db
+        from app.schemas.schemas import Parcela as ParcelaSchema, ParcelaCreate, ParcelaUpdate
+        from geoalchemy2.shape import to_shape
+        from shapely import wkt
+        from shapely.errors import WKTReadingError
+        from typing import List, Optional
+        import json
+
+        router = APIRouter()
+
+        # Obtener todas las parcelas
+        @router.get("/parcelas", response_model=List[ParcelaSchema])
+        def get_parcelas(db: Session = Depends(get_db)):
+                parcelas = (
+                    db.query(
+                        Parcela.id,
+                        Parcela.nombre,
+                        Parcela.cultivo,
+                        Parcela.area,
+                        func.ST_AsGeoJSON(Parcela.geom).label("geom")  # Convierte a GeoJSON
+                    ).all()
+                )
+                if not parcelas:
+                    raise HTTPException(status_code=404, detail="No parcelas found")
+
+                return [{"id": p.id, "nombre": p.nombre, "geom": p.geom, "cultivo":p.cultivo} for p in parcelas]
+
+        # Obtener una parcela por ID
+        @router.get("/parcelas/{id}", response_model=ParcelaSchema)
+        def get_parcela(id: int, db: Session = Depends(get_db)):
+                # Consulta con conversión a GeoJSON
+                parcela = (
+                    db.query(
+                        Parcela.id,
+                        Parcela.nombre,
+                        Parcela.cultivo,
+                        Parcela.area,
+                        func.ST_AsGeoJSON(Parcela.geom).label("geom")
+                    )
+                    .filter(Parcela.id == id)
+                    .first()
+                )
+                
+                if not parcela:
+                    raise HTTPException(status_code=404, detail="Parcela not found")
+                
+                # Devuelve los datos en formato dict
+                return {"id": parcela.id, "nombre": parcela.nombre, "geom": parcela.geom, "cultivo": parcela.cultivo}
+
+        # Crear una nueva parcela
+        @router.post("/parcelas", response_model=ParcelaSchema)
+        def create_parcela(parcela: ParcelaCreate, db: Session = Depends(get_db)):
+                nueva_parcela = Parcela(
+                    nombre=parcela.nombre or "Sin nombre",
+                    geom=func.ST_GeomFromGeoJSON(parcela.geom) if parcela.geom else "SRID=4326;POLYGON EMPTY",
+                    cultivo=parcela.cultivo
+                )
+
+                db.add(nueva_parcela)
+                db.commit()
+                db.refresh(nueva_parcela)
+
+                # Consultar y devolver la parcela insertada
+                parcela_resultado = db.query(
+                    Parcela.id,
+                    Parcela.nombre,
+                    func.ST_AsGeoJSON(Parcela.geom).label("geom"),
+                    Parcela.cultivo,
+                    Parcela.area
+                ).filter(Parcela.id == nueva_parcela.id).first()
+
+                return {
+                    "id": parcela_resultado.id,
+                    "nombre": parcela_resultado.nombre,
+                    "geom": parcela_resultado.geom,
+                    "cultivo": parcela_resultado.cultivo,
+                    "area": parcela_resultado.area
+                }
+
+        # Actualizar una parcela
+        @router.put("/parcelas/{id}", response_model=ParcelaUpdate)
+        def update_parcela(id: int, parcela: ParcelaUpdate, db: Session = Depends(get_db)):
+            db_parcela = db.query(Parcela).filter(Parcela.id == id).first()
+
+            if not db_parcela:
+                raise HTTPException(status_code=404, detail="Parcela no encontrada")
+            for key, value in parcela.dict(exclude_unset=True).items():
+                setattr(db_parcela, key, value)
+
+            db.commit()
+            db.refresh(db_parcela)
+            
+            # 🔥 Convertir geom a formato WKT (string)
+            geom_wkt = to_shape(db_parcela.geom).wkt if db_parcela.geom else None
+
+            response = JSONResponse(
+                content={
+                    "nombre": db_parcela.nombre,
+                    "geom": geom_wkt,  # <-- Ahora geom es un string válido
+                    "cultivo": db_parcela.cultivo
+                }
+            )
+
+            # 🔥 Forzar encabezado CORS en respuesta 🔥
+            response.headers["Access-Control-Allow-Origin"] = "*"
+
+            return response
+
+        #Eliminar una parcela
+        @router.delete("/parcelas/{parcela_id}")
+        def delete_parcela(parcela_id: int, db: Session = Depends(get_db)):
+            parcela_db = db.query(Parcela).filter(Parcela.id == parcela_id).first()
+            if not parcela_db:
+                raise HTTPException(status_code=404, detail="Parcela no encontrada")
+            db.delete(parcela_db)
+            db.commit()
+            return {"message": "Parcela eliminada correctamente"}
+    *mi archivo "schemas.py":
+        from pydantic import BaseModel, field_validator
+        from typing import Optional
+        import json
+
+        class ParcelaBase(BaseModel):
+            nombre:Optional[str] = None
+            geom: Optional[str] = None  # GeoJSON como cadena de texto
+            cultivo: Optional[str] = None
+            area: Optional[float] = None
+
+        class ParcelaCreate(ParcelaBase):
+            @field_validator("geom", mode='before')
+            def validar_geom(cls, valor):
+                if valor:
+                    try:
+                        # Validar si el GeoJSON es correcto
+                        geometria_json = json.loads(valor)  # Intentar cargar como JSON
+                        if isinstance(geometria_json, dict) and "type" in geometria_json:
+                            return valor  # Si es un GeoJSON válido, lo retornamos
+                    except ValueError:
+                        raise ValueError("El formato de la geometría GeoJSON es inválido.")
+                return valor  # Si no se pasa ninguna geometría, retornamos None
+
+        class Parcela(ParcelaBase):
+            id: int
+            geom: str  # GeoJSON como cadena de texto
+
+        class ParcelaUpdate(ParcelaBase):
+            id:int
+            nombre:Optional[str] = None
+            geom: Optional[str] = None  # GeoJSON como cadena de texto
+            cultivo: Optional[str] = None
+            area: Optional[float] = None
+
+        class Config:
+            orm_mode = True
+    *mi archivo "db.py":
+        from sqlalchemy import create_engine
+        from sqlalchemy.ext.declarative import declarative_base
+        from sqlalchemy.orm import sessionmaker
+
+        SQLALCHEMY_DATABASE_URL = "postgresql://postgres:19062024@localhost/ODISEA_TEST"
+
+        engine = create_engine(SQLALCHEMY_DATABASE_URL)
+        SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+        Base = declarative_base()
+
+        def get_db():
+            db = SessionLocal()
+            try:
+                yield db
+            finally:
+                db.close()
+    *mi archivo "models.py"
+        from sqlalchemy import Column, Integer, String, Date, Numeric, ForeignKey, Text,Float,Computed
+        from sqlalchemy.orm import relationship, deferred
+        from geoalchemy2 import Geometry
+        from app.database.db import Base
+
+        # Modelo de la tabla 'parcelas'
+        class Parcela(Base):
+            __tablename__ = "parcelas"
+
+            id = Column(Integer, primary_key=True, index=True)
+            nombre = Column(String(100), nullable=False)
+            geom = Column(Geometry("POLYGON", srid=4326), nullable=True)
+            cultivo = Column(String(50), nullable=True)
+            area = Column(Float, Computed("ST_Area(geom)", persisted=True))  # Calculado como campo generado
+
+            # Relación con otras tablas
+            analisis = relationship("Analisis", back_populates="parcela", cascade="all, delete")
+            historico_rendimiento = relationship("HistoricoRendimiento", back_populates="parcela", cascade="all, delete")
+
+
+        # Modelo de la tabla 'clima'
+        class clima(Base):
+            __tablename__ = "clima"
+
+            id = Column(Integer, primary_key=True, index=True)
+            region = Column(String(100), nullable=True)
+            fecha = Column(Date, nullable=False)
+            temperatura = Column(Numeric, nullable=True)  # En grados Celsius
+            precipitacion = Column(Numeric, nullable=True)  # En milímetros
+            viento = Column(Numeric, nullable=True)  # En km/h
+
+
+        # Modelo de la tabla 'analisis'
+        class Analisis(Base):
+            __tablename__ = "analisis"
+
+            id = Column(Integer, primary_key=True, index=True)
+            parcela_id = Column(Integer, ForeignKey("parcelas.id", ondelete="CASCADE"), nullable=False)
+            fecha = Column(Date, nullable=False)
+            nitrogeno = Column(Numeric, nullable=True)  # Contenido de N (kg/ha o ppm)
+            fosforo = Column(Numeric, nullable=True)  # Contenido de P (kg/ha o ppm)
+            potasio = Column(Numeric, nullable=True)  # Contenido de K (kg/ha o ppm)
+
+            # Relación con la tabla 'parcelas'
+            parcela = relationship("Parcela", back_populates="analisis")
+
+
+        # Modelo de la tabla 'historico_rendimiento'
+        class HistoricoRendimiento(Base):
+            __tablename__ = "historico_rendimiento"
+
+            id = Column(Integer, primary_key=True, index=True)
+            ano = Column(Integer, nullable=False)
+            parcela_id = Column(Integer, ForeignKey("parcelas.id", ondelete="CASCADE"), nullable=False)
+            kilos = Column(Numeric, nullable=False)  # Rendimiento total en kilogramos
+            calidad = Column(String(50), nullable=True)  # Ejemplo: "Alta", "Media", "Baja"
+            comentario = Column(Text, nullable=True)  # Comentarios adicionales
+
+            # Relación con la tabla 'parcelas'
+            parcela = relationship("Parcela", back_populates="historico_rendimiento")
+
+El frontend es el siguiente:
+    *mi archivo App.js:
+        import React from 'react';
+        import Parcelas from './pages/Parcelas';
+
+        function App() {
+        return (
+            <div className="App">
+            <Parcelas />
+            </div>
+        );
+        }
+
+        export default App;
+    *mi archivo Parcelas.js:
+        import React from 'react';
+        import TableParcelas from '../components/TableParcelas';
+
+        const Parcelas = () => {
+        return (
+            <div>
+            <h1>Mis parcelas</h1>
+            <TableParcelas />
+            </div>
+        );
+        };
+
+        export default Parcelas;
+    *mi archivo api.js:
+        import axios from 'axios';
+
+        // Base URL del backend
+        const API = axios.create({
+        baseURL: "http://localhost:8000/api/v1", // Cambia según la configuración de tu backend
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        });
+
+        export const getParcelas = async () => {
+        const response = await API.get('/parcelas');
+        return response.data;
+        };
+
+        export const updateParcela = async (id, data) => {
+        const response = await API.put(`/parcelas/${id}`, data);
+        return response.data;
+        };
+
+        export const createParcela = async (parcela) => {
+        try {
+            // Usamos API.post para que utilice el baseURL configurado
+            const response = await API.post("/parcelas", parcela);
+            return response.data;
+        } catch (error) {
+            console.error("Error en la solicitud:", error.response?.data || error.message);
+            throw error;
+        }
+        };
+
+        export const deleteParcela = async (id) => {
+        const response = await API.delete(`/parcelas/${id}`);
+        return response.data;
+        };
+
+        export default API;
+    *mi archivo TableParcelas.js:import React, { useState, useEffect } from "react";
+        import { getParcelas, createParcela, updateParcela, deleteParcela } from "../services/api"; // Asegúrate de importar la función correcta
+        import Papa from "papaparse";
+
+        const TableParcelas = () => {
+        const [parcelas, setParcelas] = useState([]);
+        const [selectedParcelas, setSelectedParcelas] = useState([]);
+        const [showForm, setShowForm] = useState(false);
+        const [newParcela, setNewParcela] = useState({ nombre: "", cultivo: "", geom:"" }); // Sin "geom"
+        const [editingParcela, setEditingParcela] = useState(null); // Estado para la edición
+        const [sortConfig, setSortConfig] = useState({ key: "id", direction: "asc" }); // 🔼 Estado para ordenación
+        const [filterField, setFilterField] = useState("nombre"); // Campo seleccionado
+        const [filterValue, setFilterValue] = useState(""); // Valor ingresado por el usuario
+
+        useEffect(() => {
+            const fetchParcelas = async () => {
+            const data = await getParcelas();
+            setParcelas(data);
+            };
+            fetchParcelas();
+        }, []);
+
+        const filteredParcelas = parcelas.filter((p) => {
+            if (!filterValue) return true; // Si no hay filtro, mostrar todas
+        
+            const value = String(p[filterField] || "").toLowerCase(); // Convierte a string y minúsculas
+            return value.includes(filterValue.toLowerCase());
+        });
+
+        const sortedParcelas = [...filteredParcelas].sort((a, b) => {
+            if (!sortConfig.key) return 0;
+            const aValue = a[sortConfig.key];
+            const bValue = b[sortConfig.key];
+
+            if (aValue < bValue) return sortConfig.direction === "asc" ? -1 : 1;
+            if (aValue > bValue) return sortConfig.direction === "asc" ? 1 : -1;
+            return 0;
+        });
+
+        const handleSort = (key) => {
+            setSortConfig((prev) => ({
+            key,
+            direction: prev.key === key && prev.direction === "asc" ? "desc" : "asc",
+            }));
+        };
+
+
+        const handleSelectAll = (e) => {
+            if (e.target.checked) {
+            setSelectedParcelas(parcelas.map((parcela) => parcela.id));
+            } else {
+            setSelectedParcelas([]);
+            }
+        };
+
+        const handleSelect = (id) => {
+            setSelectedParcelas((prev) =>
+            prev.includes(id) ? prev.filter((selectedId) => selectedId !== id) : [...prev, id]
+            );
+        };
+
+        const handleEdit = () => {
+            if (selectedParcelas.length === 1) {
+            const parcelaToEdit = parcelas.find((p) => p.id === selectedParcelas[0]);
+            if(parcelaToEdit){
+            setEditingParcela({
+                id: parcelaToEdit.id || "",
+                nombre: parcelaToEdit.nombre || "",
+                cultivo: parcelaToEdit.cultivo || "",
+                geom: parcelaToEdit.geom || "", // ✅ Evita valores undefined
+            });
+            } else {
+            console.error("No se encontró la parcela con el id seleccionado");
+            }
+        } else {
+            console.warn("Se debe seleccionar una sola parcela");
+        }
+        };
+
+        const handleUpdateParcela = async () => {
+            if (!editingParcela) return;
+
+            try {
+            const updatedParcela = await updateParcela(editingParcela.id, editingParcela);
+            setParcelas(parcelas.map((p) => (p.id === editingParcela.id ? updatedParcela : p)));
+            setEditingParcela(null); // Cerrar formulario de edición
+            } catch (error) {
+            console.error("Error al actualizar la parcela:", error);
+            alert("Error al actualizar la parcela.");
+            }
+        };
+
+        const handleDownloadCSV = () => {
+            const selectedData = parcelas.filter((p) => selectedParcelas.includes(p.id));
+            const csv = Papa.unparse(selectedData);
+            const blob = new Blob([csv], { type: "text/csv" });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = "parcelas.csv";
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        };
+
+        const handleCreateParcela = async () => {
+            if (!newParcela.nombre || !newParcela.cultivo) {
+            alert("Por favor, completa los campos obligatorios: Nombre y Cultivo.");
+            return;
+            }
+
+            // Enviar solo nombre y cultivo (sin geom)
+            const parcelaData = {
+            nombre: newParcela.nombre,
+            cultivo: newParcela.cultivo,
+            geom: newParcela.geom || null, // Un GeoJSON de ejemplo,
+            };
+
+            console.log("Enviando datos:", JSON.stringify(parcelaData, null, 2)); // 👀 Ver qué datos se envían
+
+            try {
+            const response = await createParcela(parcelaData);
+            console.log("Respuesta del servidor:", response); // Verificar la respuesta
+
+            setParcelas([...parcelas, response]);
+            setNewParcela({ nombre: "", cultivo: "" }); // Restablecer campos
+            setShowForm(false);
+            } catch (error) {
+            console.error("Error al crear la parcela:", error);
+            alert(`Error al crear parcela: ${error.message}`);
+            }
+        };
+
+        return (
+            <div className="container mx-auto p-4">
+            {/* Botón para crear una nueva parcela */}
+            <div className="flex justify-between items-center mb-4">
+                <button
+                onClick={() => setShowForm(true)}
+                className="bg-blue-500 text-white p-2 rounded hover:bg-blue-600"
+                >
+                Crear Nueva Parcela
+                </button>
+            </div>
+
+            <div className="flex gap-2 mb-4">
+        {/* Selector de campo */}
+        <select
+            value={filterField}
+            onChange={(e) => setFilterField(e.target.value)}
+            className="border p-2 rounded"
+        >
+            <option value="id">ID</option>
+            <option value="nombre">Nombre</option>
+            <option value="cultivo">Cultivo</option>
+            <option value="area">Área</option>
+        </select>
+
+        {/* Input para valor de búsqueda */}
+        <input
+            type="text"
+            value={filterValue}
+            onChange={(e) => setFilterValue(e.target.value)}
+            placeholder={`Buscar por ${filterField}...`}
+            className="border p-2 rounded w-64"
+        />
+        </div>
+
+            {/* Tabla */}
+            <table className="table-auto w-full border-collapse border border-gray-300">
+                <thead>
+                <tr>
+                    <th className="border border-gray-300 p-2">
+                    <input
+                        type="checkbox"
+                        onChange={handleSelectAll}
+                        checked={selectedParcelas.length === parcelas.length && parcelas.length > 0}
+                    />
+                    </th>
+                    <th className="border border-gray-300 p-2 cursor-pointer" onClick={() => handleSort("id")}>ID</th>
+                    <th className="border border-gray-300 p-2 cursor-pointer" onClick={() => handleSort("nombre")}>Nombre</th>
+                    <th className="border border-gray-300 p-2 cursor-pointer" onClick={() => handleSort("cultivo")}>Cultivo</th>
+                    <th className="border border-gray-300 p-2 cursor-pointer" onClick={() => handleSort("area")}>Área</th>
+                </tr>
+                </thead>
+                <tbody>
+                {sortedParcelas.length > 0 ? (
+                    sortedParcelas.map((parcela) => (
+                    <tr key={`parcela-${parcela.id}`}>
+                        <td className="border border-gray-300 p-2 text-center">
+                        <input type="checkbox" checked={selectedParcelas.includes(parcela.id)} onChange={() => setSelectedParcelas((prev) => (prev.includes(parcela.id) ? prev.filter((id) => id !== parcela.id) : [...prev, parcela.id]))} />
+                        </td>
+                        <td className="border border-gray-300 p-2 text-center">{parcela.id}</td>
+                        <td className="border border-gray-300 p-2">{parcela.nombre}</td>
+                        <td className="border border-gray-300 p-2 text-right">{parcela.cultivo}</td>
+                        <td className="border border-gray-300 p-2 text-right">{parcela.area}</td>
+
+                    </tr>
+                    ))
+                ) : (
+                    <tr>
+                    <td colSpan="4" className="border border-gray-300 p-4 text-center">No hay datos disponibles.</td>
+                    </tr>
+                )}
+                </tbody>
+            </table>
+
+            {/* Botones de acción */}
+            <div className="flex justify-start gap-4 mt-4">
+                <button
+                onClick={handleEdit}
+                disabled={selectedParcelas.length !== 1}
+                className={`p-2 rounded ${
+                    selectedParcelas.length === 1
+                    ? "bg-blue-500 text-white hover:bg-blue-600"
+                    : "bg-gray-300 text-gray-700 cursor-not-allowed"
+                }`}
+                >
+                Editar Parcela
+                </button>
+                <button
+                onClick={handleDownloadCSV}
+                disabled={selectedParcelas.length === 0}
+                className={`p-2 rounded ${
+                    selectedParcelas.length > 0
+                    ? "bg-green-500 text-white hover:bg-green-600"
+                    : "bg-gray-300 text-gray-700 cursor-not-allowed"
+                }`}
+                >
+                Descargar CSV
+                </button>
+            </div>
+
+            {/* Formulario para crear una nueva parcela */}
+            {showForm && (
+                <div className="fixed inset-0 bg-gray-900 bg-opacity-50 flex items-center justify-center">
+                <div className="bg-white p-6 rounded shadow-lg">
+                    <h2 className="text-lg font-bold mb-4">Nueva Parcela</h2>
+                    <div className="mb-4">
+                    <label className="block mb-1">id:</label>
+                    <input
+                        type="text"
+                        value={newParcela.id}
+                        onChange={(e) =>
+                        setNewParcela((prev) => ({ ...prev, id: e.target.value }))
+                        }
+                        className="w-full p-2 border border-gray-300 rounded"
+                    />
+                    </div>
+                    <div className="mb-4">
+                    <label className="block mb-1">Nombre:</label>
+                    <input
+                        type="text"
+                        value={newParcela.nombre}
+                        onChange={(e) =>
+                        setNewParcela((prev) => ({ ...prev, nombre: e.target.value }))
+                        }
+                        className="w-full p-2 border border-gray-300 rounded"
+                    />
+                    </div>
+                    <div className="mb-4">
+                    <label className="block mb-1">Geometria:</label>
+                    <input
+                        type="text"
+                        value={newParcela.geom ?? ""}
+                        onChange={(e) =>
+                        setNewParcela((prev) => ({ ...prev, geom: e.target.value }))
+                        }
+                        className="w-full p-2 border border-gray-300 rounded"
+                    />
+                    </div>
+                    <div className="mb-4">
+                    <label className="block mb-1">Cultivo:</label>
+                    <input
+                        type="text"
+                        value={newParcela.cultivo}
+                        onChange={(e) =>
+                        setNewParcela((prev) => ({ ...prev, cultivo: e.target.value }))
+                        }
+                        className="w-full p-2 border border-gray-300 rounded"
+                    />
+                    </div>
+                    <div className="flex justify-end gap-4">
+                    <button
+                        onClick={() => setShowForm(false)}
+                        className="bg-gray-500 text-white p-2 rounded hover:bg-gray-600"
+                    >
+                        Cancelar
+                    </button>
+                    <button
+                        onClick={handleCreateParcela}
+                        className="bg-blue-500 text-white p-2 rounded hover:bg-blue-600"
+                    >
+                        Crear
+                    </button>
+                    </div>
+                </div>
+                </div>
+            )}
+            {/* Formulario para editar una parcela */}
+                    {editingParcela && (
+                <div className="fixed inset-0 bg-gray-900 bg-opacity-50 flex items-center justify-center">
+                <div className="bg-white p-6 rounded shadow-lg">
+                    <h2 className="text-lg font-bold mb-4">Editar Parcela</h2>
+                    <div className="mb-4">
+                    <label className="block mb-1">Nombre:</label>
+                    <input
+                        type="text"
+                        value={editingParcela.nombre}
+                        onChange={(e) =>
+                        setEditingParcela((prev) => ({ ...prev, nombre: e.target.value }))
+                        }
+                        className="w-full p-2 border border-gray-300 rounded"
+                    />
+                    </div>
+                    <div className="mb-4">
+                    <label className="block mb-1">Cultivo:</label>
+                    <input
+                        type="text"
+                        value={editingParcela.cultivo}
+                        onChange={(e) =>
+                        setEditingParcela((prev) => ({ ...prev, cultivo: e.target.value }))
+                        }
+                        className="w-full p-2 border border-gray-300 rounded"
+                    />
+                    </div>
+                    <div className="mb-4">
+                    <label className="block mb-1">id:</label>
+                    <input
+                        type="text"
+                        value={editingParcela.id}
+                        onChange={(e) =>
+                        setEditingParcela((prev) => ({ ...prev, id: e.target.value }))
+                        }
+                        className="w-full p-2 border border-gray-300 rounded"
+                    />
+                    </div>
+                    <div className="mb-4">
+                    <label className="block mb-1">Geometria:</label>
+                    <input
+                        type="text"
+                        value={editingParcela.geom ?? ""}
+                        onChange={(e) =>
+                        setEditingParcela((prev) => ({ ...prev, geom: e.target.value }))
+                        }
+                        className="w-full p-2 border border-gray-300 rounded"
+                    />
+                    </div>
+                    <div className="flex justify-end gap-4">
+                    <button
+                        onClick={() => setEditingParcela(null)}
+                        className="bg-gray-500 text-white p-2 rounded hover:bg-gray-600"
+                    >
+                        Cancelar
+                    </button>
+                    <button
+                        onClick={handleUpdateParcela}
+                        className="bg-green-500 text-white p-2 rounded hover:bg-green-600"
+                    >
+                        Guardar cambios
+                    </button>
+                    </div>
+                </div>
+                </div>
+            )}
+            </div>
+        );
+        };
+
+        export default TableParcelas;
