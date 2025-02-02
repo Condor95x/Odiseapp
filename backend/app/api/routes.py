@@ -13,8 +13,6 @@ import json
 
 router = APIRouter()
 
-class ParcelaCreate(ParcelaBase):
-    geom: Optional[dict] = None  # Diccionario para GeoJSON
 
 # Obtener todas las parcelas
 @router.get("/parcelas", response_model=List[ParcelaSchema])
@@ -58,32 +56,7 @@ def get_parcela(id: int, db: Session = Depends(get_db)):
 # Crear una nueva parcela
 @router.post("/parcelas", response_model=ParcelaSchema)
 def create_parcela(parcela: ParcelaCreate, db: Session = Depends(get_db)):
-        nueva_parcela = Parcela(
-            nombre=parcela.nombre or "Sin nombre",
-            geom=func.ST_GeomFromGeoJSON(parcela.geom) if parcela.geom else "SRID=4326;POLYGON EMPTY",
-            cultivo=parcela.cultivo
-        )
-
-        db.add(nueva_parcela)
-        db.commit()
-        db.refresh(nueva_parcela)
-
-        # Consultar y devolver la parcela insertada
-        parcela_resultado = db.query(
-            Parcela.id,
-            Parcela.nombre,
-            func.ST_AsGeoJSON(Parcela.geom).label("geom"),
-            Parcela.cultivo,
-            Parcela.area
-        ).filter(Parcela.id == nueva_parcela.id).first()
-
-        return {
-            "id": parcela_resultado.id,
-            "nombre": parcela_resultado.nombre,
-            "geom": parcela_resultado.geom,
-            "cultivo": parcela_resultado.cultivo,
-            "area": parcela_resultado.area
-        }
+    return create_parcela(db, parcela)
 
 # Actualizar una parcela
 @router.put("/parcelas/{id}", response_model=ParcelaUpdate)
