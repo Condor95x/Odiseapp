@@ -41,7 +41,7 @@ def get_parcela(id: int, db: Session = Depends(get_db)):
                 Parcela.nombre,
                 Parcela.cultivo,
                 Parcela.area,
-                func.ST_AsGeoJSON(Parcela.geom).label("geom")
+                #func.ST_AsGeoJSON(Parcela.geom).label("geom")
             )
             .filter(Parcela.id == id)
             .first()

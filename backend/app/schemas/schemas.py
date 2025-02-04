@@ -4,7 +4,7 @@ import json
 
 class ParcelaBase(BaseModel):
     nombre:Optional[str] = None
-    geom: Optional[dict] = None  # GeoJSON como cadena de texto
+    geom: Optional[str] = None  # GeoJSON como cadena de texto
     cultivo: Optional[str] = None
     area: Optional[float] = None
 
