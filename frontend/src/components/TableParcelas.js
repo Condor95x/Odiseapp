@@ -44,7 +44,6 @@ const TableParcelas = () => {
     }));
   };
 
-
   const handleSelectAll = (e) => {
     if (e.target.checked) {
       setSelectedParcelas(parcelas.map((parcela) => parcela.id));
@@ -132,6 +131,29 @@ const handleUpdateParcela = async () => {
     }
   };
 
+  const handleDeleteParcelas = async () => {
+    if (selectedParcelas.length === 0) {
+      alert("Por favor, selecciona al menos una parcela para eliminar.");
+      return;
+    }
+
+    if (window.confirm("¿Estás seguro de que deseas eliminar las parcelas seleccionadas?")) {
+      try {
+        for (const id of selectedParcelas) {
+          await deleteParcela(id);
+        }
+        // Recargar las parcelas después de eliminar
+        const data = await getParcelas();
+        setParcelas(data);
+        setSelectedParcelas([]); // Limpiar la selección
+        alert("Parcelas eliminadas exitosamente.");
+      } catch (error) {
+        console.error("Error al eliminar las parcelas:", error);
+        alert("Error al eliminar las parcelas.");
+      }
+    }
+  };
+
   return (
     <div className="container mx-auto p-4">
       {/* Botón para crear una nueva parcela */}
@@ -208,6 +230,17 @@ const handleUpdateParcela = async () => {
 
       {/* Botones de acción */}
       <div className="flex justify-start gap-4 mt-4">
+        <button
+          onClick={handleDeleteParcelas}
+          disabled={selectedParcelas.length === 0}
+          className={`p-2 rounded ${
+            selectedParcelas.length > 0
+              ? "bg-red-500 text-white hover:bg-red-600"
+              : "bg-gray-300 text-gray-700 cursor-not-allowed"
+          }`}
+        >
+          Eliminar Parcela(s)
+        </button>
         <button
           onClick={handleEdit}
           disabled={selectedParcelas.length !== 1}
