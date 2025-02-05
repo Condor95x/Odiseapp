@@ -2,19 +2,19 @@ import axios from 'axios';
 
 // Base URL del backend
 const API = axios.create({
-  baseURL: "http://localhost:8000/api/v1", // Cambia según la configuración de tu backend
+  baseURL: "http://localhost:8000/parcelas", // Cambia según la configuración de tu backend
   headers: {
     'Content-Type': 'application/json',
   },
 });
 
 export const getParcelas = async () => {
-  const response = await API.get('/parcelas');
+  const response = await API.get('');
   return response.data;
 };
 
 export const updateParcela = async (id, data) => {
-  const response = await API.put(`/parcelas/${id}`, data);
+  const response = await API.put(`/${id}`, data);
   return response.data;
 };
 
