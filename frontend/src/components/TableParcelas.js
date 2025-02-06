@@ -2,6 +2,9 @@ import React, { useState, useEffect } from "react";
 import { getParcelas, createParcela, updateParcela, deleteParcela } from "../services/api"; // Asegúrate de importar la función correcta
 import Papa from "papaparse";
 
+import 'leaflet/dist/leaflet.css'; // Importa los estilos de Leaflet
+import Map from './Map'; // Importa el componente Map
+
 const TableParcelas = () => {
   const [parcelas, setParcelas] = useState([]);
   const [selectedParcelas, setSelectedParcelas] = useState([]);
@@ -11,6 +14,8 @@ const TableParcelas = () => {
   const [sortConfig, setSortConfig] = useState({ key: "id", direction: "asc" }); // 🔼 Estado para ordenación
   const [filterField, setFilterField] = useState("nombre"); // Campo seleccionado
   const [filterValue, setFilterValue] = useState(""); // Valor ingresado por el usuario
+  const [selectedParcelaToView, setSelectedParcelaToView] = useState(null);
+  const [mapToDisplay, setMapToDisplay] = useState(null); // Nuevo estado para controlar el renderizado del mapa
 
   useEffect(() => {
     const fetchParcelas = async () => {
@@ -154,6 +159,22 @@ const handleUpdateParcela = async () => {
     }
   };
 
+     const handleViewParcela = () => {
+        if (selectedParcelas.length === 1) {
+            const parcelaToView = parcelas.find((p) => p.id === selectedParcelas[0]);
+
+            if (parcelaToView) {
+                setSelectedParcelaToView(parcelaToView);
+                setMapToDisplay(parcelaToView); // Actualiza el estado derivado *después* de recibir la parcela
+            } else {
+                console.error("No se encontró la parcela con el ID seleccionado.");
+                alert("No se encontró la parcela.");
+            }
+        } else {
+            alert('Debes seleccionar exactamente una parcela para visualizar.');
+        }
+    };
+
   return (
     <div className="container mx-auto p-4">
       {/* Botón para crear una nueva parcela */}
@@ -263,6 +284,18 @@ const handleUpdateParcela = async () => {
         >
           Descargar CSV
         </button>
+        <button
+                onClick={handleViewParcela}
+                disabled={selectedParcelas.length !== 1}
+                className={`p-2 rounded ${
+                    selectedParcelas.length === 1
+                        ? "bg-blue-500 text-white hover:bg-blue-600"
+                        : "bg-gray-300 text-gray-700 cursor-not-allowed"
+                }`}
+            >
+                Visualizar Parcela
+        </button>
+            {selectedParcelaToView && selectedParcelaToView.geom && <Map parcela={selectedParcelaToView} />}
       </div>
 
       {/* Formulario para crear una nueva parcela */}
